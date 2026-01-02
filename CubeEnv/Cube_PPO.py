@@ -139,7 +139,7 @@ class CubeEnv(gym.Env):
         self.max_steps = 200
         self.current_step = 0
 
-# Actions: [stay, +x, -x, +y, -y]
+        # Actions: [stay, +x, -x, +y, -y]
         self.action_space = spaces.Box(
             low=-1.0, high=1.0, shape=(2,), dtype=np.float32
         )
