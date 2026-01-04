@@ -23,12 +23,6 @@ simend = 200
 x1 = []
 y1 = []
 
-def init_controller(model, data):
-    pass
-
-def controller(model, data):
-    pass
-
 def keyboard(window, key, scancode, act, mods):
     if act == glfw.PRESS:
         if key == glfw.KEY_BACKSPACE:
@@ -108,6 +102,8 @@ xml_path = abspath
 
 model = mj.MjModel.from_xml_path(xml_path)
 data = mj.MjData(model)
+mj.mj_forward(model, data)
+
 cam = mj.MjvCamera()
 opt = mj.MjvOption()
 
@@ -121,14 +117,15 @@ mj.mjv_defaultOption(opt)
 scene = mj.MjvScene(model, maxgeom=10000)
 context = mj.MjrContext(model, mj.mjtFontScale.mjFONTSCALE_150.value)
 
+cam.lookat[:] = np.array([0.0, 0.0, 0.1])
+cam.distance = 3.0
+cam.azimuth = 90
+cam.elevation = -30
+
 glfw.set_key_callback(window, keyboard)
 # glfw.set_cursor_pos_callback(window, mouse_move)
 glfw.set_mouse_button_callback(window, mouse_button)
 glfw.set_scroll_callback(window, scroll)
-
-init_controller(model,data)
-
-mj.set_mjcb_control(controller)
 
 class CubeEnv(gym.Env):
     def __init__(self, model, data, target=np.array([.25, .25])):
@@ -140,7 +137,7 @@ class CubeEnv(gym.Env):
         self.current_step = 0
 
         # Actions: [stay, +x, -x, +y, -y]
-        self.action_space = spaces.Box(
+        self.action_space = spaces.Box( 
             low=-1.0, high=1.0, shape=(2,), dtype=np.float32
         )
 
@@ -160,8 +157,8 @@ class CubeEnv(gym.Env):
 
         action = np.clip(action, -1.0, 1.0)
 
-        self.data.ctrl[0] = action[0]
-        self.data.ctrl[1] = action[1]
+        # scale to reasonable force
+        self.data.ctrl[:] = 5.0 * action
 
         for _ in range(10):
             mj.mj_step(self.model, self.data)
@@ -233,12 +230,12 @@ def compute_gae(rewards, values, dones, gamma=0.99, lam=0.95):
 
     return torch.tensor(adv, dtype=torch.float32).detach()
 
-def ppo_update(model, optimizer, obs, acts, logp_old, adv, returns,
+def ppo_update(policy, optimizer, obs, acts, logp_old, adv, returns,
                clip=0.2, value_coef=0.5, entropy_coef=0.01):
 
     for _ in range(10):
-        mean = model.actor(obs)
-        std = torch.exp(model.log_std)
+        mean = policy.actor(obs)
+        std = torch.exp(policy.log_std)
         dist = torch.distributions.Normal(mean, std)
 
         logp = dist.log_prob(acts).sum(-1)
@@ -247,7 +244,7 @@ def ppo_update(model, optimizer, obs, acts, logp_old, adv, returns,
         clipped = torch.clamp(ratio, 1 - clip, 1 + clip) * adv
         policy_loss = -(torch.min(ratio * adv, clipped)).mean()
 
-        value_loss = ((returns - model.value(obs)) ** 2).mean()
+        value_loss = ((returns - policy.value(obs)) ** 2).mean()
         entropy = dist.entropy().sum(-1).mean()
 
         loss = policy_loss + value_coef * value_loss - entropy_coef * entropy
@@ -260,14 +257,11 @@ env = CubeEnv(model, data)
 obs_dim = 4
 act_dim = 2
 
-mj_model = mj.MjModel.from_xml_path("cube.xml")
-mj_data = mj.MjData(mj_model)
+obs_dim = 4
+act_dim = 2
 
-policy = ActorCritic(obs_dim=4, act_dim=...)
+policy = ActorCritic(obs_dim, act_dim)
 optimizer = torch.optim.Adam(policy.parameters(), lr=3e-4)
-
-model = ActorCritic(obs_dim, act_dim)
-optimizer = optim.Adam(model.parameters(), lr=3e-4)
 
 for epoch in range(500):
     obs_buf, act_buf, logp_buf, rew_buf, val_buf, done_buf = [], [], [], [], [], []
@@ -275,15 +269,18 @@ for epoch in range(500):
     obs, _ = env.reset()
     done = False
 
+    episode_return = 0.0
+
     for step in range(2048):
+        
 
         # ---------- RENDER (non-blocking) ----------
         viewport_width, viewport_height = glfw.get_framebuffer_size(window)
         viewport = mj.MjrRect(0, 0, viewport_width, viewport_height)
 
         mj.mjv_updateScene(
-            mj_model,
-            mj_data,
+            model,
+            data,
             opt,
             None,
             cam,
@@ -306,6 +303,8 @@ for epoch in range(500):
         next_obs, reward, term, trunc, _ = env.step(action.numpy())
         done = term or trunc
 
+        episode_return += reward
+
         obs_buf.append(obs_t)
         act_buf.append(action)
         logp_buf.append(logp)
@@ -318,6 +317,8 @@ for epoch in range(500):
         if done:
             obs, _ = env.reset()
             done = False
+            print(f"Episode return: {episode_return:.3f}")
+            episode_return = 0.0
 
     # ---------- PPO UPDATE ----------
     adv = compute_gae(rew_buf, val_buf, done_buf)
@@ -329,7 +330,7 @@ for epoch in range(500):
 
     adv = (adv - adv.mean()) / (adv.std() + 1e-8)
 
-    ppo_update(model, optimizer, obs, acts, logp_old, adv, returns)
+    ppo_update(policy, optimizer, obs, acts, logp_old, adv, returns)
 
     print(f"Epoch {epoch} complete")
 

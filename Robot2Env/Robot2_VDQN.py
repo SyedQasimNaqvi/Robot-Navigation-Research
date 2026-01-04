@@ -7,23 +7,34 @@ import torch.optim as optim
 import gymnasium as gym
 from gymnasium import spaces
 from collections import deque
+import random
 import matplotlib.pyplot as plt
-import random, os, csv
+import os
+import csv
 
-if torch.cuda.is_available():
-    print("PyTorch is using GPU (CUDA).")
-    print(f"GPU Name: {torch.cuda.get_device_name(0)}")
-    print(f"Number of CUDA devices: {torch.cuda.device_count()}")
-else:
-    print("PyTorch is using CPU.")
+# if torch.cuda.is_available():
+#     print("PyTorch is using GPU (CUDA).")
+#     print(f"GPU Name: {torch.cuda.get_device_name(0)}")
+#     print(f"Number of CUDA devices: {torch.cuda.device_count()}")
+# else:
+#     print("PyTorch is using CPU.")
 
-xml_path = 'cube.xml'
-simend = 200
+xml_path = 'Robot2.xml'
+simend = 500
+button_left = False
+button_middle = False
+button_right = False
+lastx = 0
+lasty = 0
 
+# Graph data
 x1 = []
 y1 = []
 
-def init_controller(model, data):
+# CSV data
+episode_data = []
+
+def init_controller(model,data):
     pass
 
 def controller(model, data):
@@ -121,11 +132,6 @@ mj.mjv_defaultOption(opt)
 scene = mj.MjvScene(model, maxgeom=10000)
 context = mj.MjrContext(model, mj.mjtFontScale.mjFONTSCALE_150.value)
 
-cam.lookat[:] = np.array([0.0, 0.0, 0.1])
-cam.distance = 3.0
-cam.azimuth = 90
-cam.elevation = -30
-
 glfw.set_key_callback(window, keyboard)
 # glfw.set_cursor_pos_callback(window, mouse_move)
 glfw.set_mouse_button_callback(window, mouse_button)
@@ -135,19 +141,19 @@ init_controller(model,data)
 
 mj.set_mjcb_control(controller)
 
-class CubeEnv(gym.Env):
-    def __init__(self, model, data, target=np.array([.25, .25])):
-        super(CubeEnv, self).__init__()
+class BoxEnv(gym.Env):
+    def __init__(self, model, data, target=np.array([.5, .5])):
+        super(BoxEnv, self).__init__()
         self.model = model
         self.data = data
         self.target = target
         self.max_steps = 200
         self.current_step = 0
 
-        # Actions: [stay, +x, -x, +y, -y]
-        self.action_space = spaces.Discrete(5)
+        # Actions: [stay, +, -, +steer, -steer, reset]
+        self.action_space = spaces.Discrete(9)
 
-        # Observations: [x, y, x_vel, y_vel]
+        # Observations: [x, steer, x_vel, steer_pos]
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(4,), dtype=np.float32
         )
@@ -163,13 +169,23 @@ class CubeEnv(gym.Env):
 
         # apply action
         if action == 1:
-            self.data.qvel[0] = 1
+            self.data.ctrl[0:1] = 10
         elif action == 2:
-            self.data.qvel[0] = -1
+            self.data.ctrl[0:1] = -10
         elif action == 3:
-            self.data.qvel[1] = 1
+            self.data.ctrl[0:1] = 0
         elif action == 4:
-            self.data.qvel[1] = -1
+            self.data.ctrl[0] = 10
+        elif action == 5:
+            self.data.ctrl[0] = -10
+        elif action == 6:
+            self.data.ctrl[0] = 0
+        elif action == 7:
+            self.data.ctrl[1] = 10
+        elif action == 8:
+            self.data.ctrl[1] = -10
+        elif action == 9:
+            self.data.ctrl[1] = 0
 
         for __ in range(10):
             mj.mj_step(self.model, self.data)        # <-- self.model/self.data
@@ -185,13 +201,13 @@ class CubeEnv(gym.Env):
         )
 
         return obs, reward, done, False, {}
-    
+
     def _get_obs(self):
         return np.array([
             self.data.qpos[0], self.data.qpos[1],
             self.data.qvel[0], self.data.qvel[1]
         ], dtype=np.float32)
-    
+
 # -----------------------
 # DQN Agent
 # -----------------------
@@ -209,11 +225,11 @@ class DQN(nn.Module):
 
 # Training hyperparameters
 state_dim = 4
-action_dim = 5
+action_dim = 9
 lr = 1e-4
 gamma = 0.99
 epsilon = 1.0
-epsilon_min = 0.01
+epsilon_min = 0.0
 epsilon_decay = 0.995
 batch_size = 64
 replay_buffer = deque(maxlen=10000)
@@ -249,17 +265,17 @@ def train_step():
     loss.backward()
     optimizer.step()
 
-env = CubeEnv(model, data)
+env = BoxEnv(model, data)
 
 rewards_per_episode = []
 
-for episode in range(500):
+for episode in range(1000):
     state, _ = env.reset()
     total_reward = 0
     done = False
 
     while not done:
-        if episode % 20 == 0:  # Render every n episodes
+        if episode % 100 == 0:  # Render every 100 episodes
             # Rendering loop
             time_prev = data.time
 
@@ -299,12 +315,25 @@ for episode in range(500):
         train_step()
     rewards_per_episode.append(total_reward)
 
+    episode_data.append([
+        episode,
+        total_reward,
+        epsilon
+    ])
+
     # update target network
     if episode % 10 == 0:
         target_net.load_state_dict(policy_net.state_dict())
 
     epsilon = max(epsilon_min, epsilon * epsilon_decay)
     print(f"Episode {episode}, Total reward: {total_reward}")
+
+with open("training_results_RobotVDQN.csv", "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(["Episode", "TotalReward", "Epsilon"])
+    writer.writerows(episode_data)
+
+print("Saved training_results_RobotVDQN.csv")
 
 plt.figure(figsize=(8, 5))
 plt.plot(rewards_per_episode, label="Reward")
