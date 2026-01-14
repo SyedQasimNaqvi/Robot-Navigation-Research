@@ -168,9 +168,9 @@ class CubeEnv(gym.Env):
 
         reward = -dist
         if dist < 0.05:
-            reward += 10.0
+            reward += 50.0
 
-        terminated = dist < 0.05
+        terminated = False
         truncated = self.current_step >= self.max_steps
 
         return obs, reward, terminated, truncated, {}
@@ -257,13 +257,17 @@ env = CubeEnv(model, data)
 obs_dim = 4
 act_dim = 2
 
-obs_dim = 4
-act_dim = 2
+rewards_per_episode = []
 
 policy = ActorCritic(obs_dim, act_dim)
 optimizer = torch.optim.Adam(policy.parameters(), lr=3e-4)
 
-for epoch in range(500):
+num_of_ep = 500
+episode = 0
+epoch = 0
+
+while episode < num_of_ep:
+
     obs_buf, act_buf, logp_buf, rew_buf, val_buf, done_buf = [], [], [], [], [], []
 
     obs, _ = env.reset()
@@ -271,27 +275,26 @@ for epoch in range(500):
 
     episode_return = 0.0
 
-    for step in range(2048):
+    for step in range(1024):
         
-
         # ---------- RENDER (non-blocking) ----------
         viewport_width, viewport_height = glfw.get_framebuffer_size(window)
         viewport = mj.MjrRect(0, 0, viewport_width, viewport_height)
 
-        mj.mjv_updateScene(
-            model,
-            data,
-            opt,
-            None,
-            cam,
-            mj.mjtCatBit.mjCAT_ALL.value,
-            scene
-        )
+        # mj.mjv_updateScene(
+        #     model,
+        #     data,
+        #     opt,
+        #     None,
+        #     cam,
+        #     mj.mjtCatBit.mjCAT_ALL.value,
+        #     scene
+        # )
 
-        mj.mjr_render(viewport, scene, context)
+        # mj.mjr_render(viewport, scene, context)
 
-        glfw.swap_buffers(window)
-        glfw.poll_events()
+        # glfw.swap_buffers(window)
+        # glfw.poll_events()
         # -------------------------------------------
 
         obs_t = torch.tensor(obs, dtype=torch.float32)
@@ -318,7 +321,13 @@ for epoch in range(500):
             obs, _ = env.reset()
             done = False
             print(f"Episode return: {episode_return:.3f}")
+            rewards_per_episode.append(episode_return)
+            episode += 1
             episode_return = 0.0
+
+            if episode >= num_of_ep:
+                break
+        
 
     # ---------- PPO UPDATE ----------
     adv = compute_gae(rew_buf, val_buf, done_buf)
@@ -332,16 +341,18 @@ for epoch in range(500):
 
     ppo_update(policy, optimizer, obs, acts, logp_old, adv, returns)
 
+    epoch += 1
+
     print(f"Epoch {epoch} complete")
 
-# plt.figure(figsize=(8, 5))
-# plt.plot(rewards_per_episode, label="Reward")
-# plt.xlabel("Episode")
-# plt.ylabel("Total Reward")
-# plt.title("Reward per Episode (Vanilla DQN)")
-# plt.legend()
-# plt.grid(True)
-# plt.show()
+plt.figure(figsize=(8, 5))
+plt.plot(rewards_per_episode, label="Reward")
+plt.xlabel("Episode")
+plt.ylabel("Total Reward")
+plt.title("Reward per Episode (PPO)")
+plt.legend()
+plt.grid(True)
+plt.show()
 
 env.close()
 
