@@ -259,7 +259,7 @@ for episode in range(500):
     done = False
 
     while not done:
-        if episode % 20 == 0:  # Render every n episodes
+        if episode % 500 == 0:  # Render every n episodes
             # Rendering loop
             time_prev = data.time
 

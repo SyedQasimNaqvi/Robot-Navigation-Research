@@ -19,7 +19,7 @@ import csv
 # else:
 #     print("PyTorch is using CPU.")
 
-xml_path = 'box.xml' #xml file (assumes this is in the same folder as this file)
+xml_path = 'cube.xml' #xml file (assumes this is in the same folder as this file)
 simend = 200 #simulation time
 
 # Graph data
@@ -286,7 +286,7 @@ class DoubleDQN:
         if self.steps % self.tau == 0:
             self.target_net.load_state_dict(self.q_net.state_dict())
 
-def train_double_dqn(episodes=100):
+def train_double_dqn(episodes=500):
     env = BoxEnv(model, data)
     agent = DoubleDQN(env.observation_space.shape[0], env.action_space.n)
     epsilon, epsilon_min, epsilon_decay = 1.0, 0.01, 0.995
@@ -324,7 +324,7 @@ def train_double_dqn(episodes=100):
             # process pending GUI events, call GLFW callbacks
             glfw.poll_events()
             action = agent.act(state, epsilon)
-            next_state, reward, done, _ = env.step(action)   # reward comes from YOUR env
+            next_state, reward, done, _, _ = env.step(action)   # reward comes from YOUR env
             agent.replay_buffer.push(state, action, reward, next_state, done)
             agent.update()
             state = next_state
